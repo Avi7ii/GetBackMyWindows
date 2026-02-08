@@ -12,12 +12,11 @@
   <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License">
 </p>
 
+<!-- Language Switch / 语言切换 -->
 <p>
-  <a href="#-功能特性">功能</a> •
-  <a href="#-features">Features</a> •
-  <a href="#-安装">安装</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-使用方法">使用</a>
+  <a href="#-中文"><img src="https://img.shields.io/badge/🇨🇳_简体中文-点击查看-red?style=for-the-badge" alt="中文"></a>
+  &nbsp;&nbsp;
+  <a href="#-english"><img src="https://img.shields.io/badge/🇺🇸_English-Click_Here-blue?style=for-the-badge" alt="English"></a>
 </p>
 
 ---
