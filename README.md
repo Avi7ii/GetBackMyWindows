@@ -3,7 +3,7 @@
 # 🪟 GetBackMyWindows
 
 <p>
-  <strong>一键最小化，桌面即刻清净 | One-click minimize, instant desktop zen</strong>
+  <strong>0占用0负载的Mac高效窗口管理——还给你更高效的Windows系统窗口策略 | One-click minimize, instant desktop zen</strong>
 </p>
 
 <p>
