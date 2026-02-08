@@ -39,13 +39,13 @@
 ### 📦 安装
 
 #### 方式一：下载预编译版本
-1. 前往 [Releases](https://github.com/Zhao/GetBackMyWindows/releases) 页面
+1. 前往 [Releases](https://github.com/Avi7ii/GetBackMyWindows/releases) 页面
 2. 下载最新的 `GetBackMyWindows.app.zip`
 3. 解压后拖入「应用程序」文件夹
 
 #### 方式二：从源码编译
 ```bash
-git clone https://github.com/Zhao/GetBackMyWindows.git
+git clone https://github.com/Avi7ii/GetBackMyWindows.git
 cd GetBackMyWindows
 chmod +x build.sh
 ./build.sh
@@ -88,13 +88,13 @@ chmod +x build.sh
 ### 📦 Installation
 
 #### Option 1: Download Pre-built
-1. Go to [Releases](https://github.com/Zhao/GetBackMyWindows/releases)
+1. Go to [Releases](https://github.com/Avi7ii/GetBackMyWindows/releases)
 2. Download the latest `GetBackMyWindows.app.zip`
 3. Unzip and drag to your Applications folder
 
 #### Option 2: Build from Source
 ```bash
-git clone https://github.com/Zhao/GetBackMyWindows.git
+git clone https://github.com/Avi7ii/GetBackMyWindows.git
 cd GetBackMyWindows
 chmod +x build.sh
 ./build.sh
