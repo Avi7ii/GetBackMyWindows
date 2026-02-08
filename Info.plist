@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.user.GetBackMyWindows</string>
+    <key>CFBundleName</key>
+    <string>GetBackMyWindows</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSPrivacyAccessibleUsageDescription</key>
+    <string>GetBackMyWindows needs accessibility permissions to control windows (minimize them) and detect Dock interactions.</string>
+    <key>CFBundleIconFile</key>
+    <string>GetBackMyWindows</string>
+</dict>
+</plist>

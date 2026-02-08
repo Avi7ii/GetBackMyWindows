@@ -1,0 +1,34 @@
+# Build outputs
+Build/
+*.app
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode (if used in future)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.moved-aside
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
