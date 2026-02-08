@@ -117,14 +117,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HotkeyManager.shared.registerHotkey()
         setupEventTap()
         
-        // 允许 App Nap - 热键事件会自动唤醒应用，无需禁用
+        // 防止 App Nap (关键修复)
+        //由于 EventTap 需要实时响应（否则会被系统判定超时而禁用），必须禁止 App Nap
+        ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Global Event Listener")
+        
         // 睡眠/唤醒监听
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
     }
     
     @objc func didWake() {
         print("System Woke Up: Resetting Event Tap...")
-        // Re-initialize event tap after a short delay to ensure system is ready
+        // 延迟重置，给系统一点缓冲时间
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.setupEventTap()
         }
@@ -332,9 +335,8 @@ func minimizeAppWindows(_ appRef: AXUIElement) {
 }
 
 func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
-    // 处理 tap 被系统禁用的情况
+    // 处理 tap 被系统禁用的情况（App Nap、超时等）
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // 延迟重建 eventTap（通过主线程）
         DispatchQueue.main.async {
             if let delegate = NSApp.delegate as? AppDelegate {
                 delegate.setupEventTap()
@@ -343,14 +345,11 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
         return Unmanaged.passUnretained(event)
     }
     
-    if type != .leftMouseDown { return Unmanaged.passUnretained(event) }
+    guard type == .leftMouseDown else { return Unmanaged.passUnretained(event) }
     
-    // 快速检查：点击位置是否在 Dock 区域（屏幕底部 80px）
+    // 直接使用 Accessibility API 判断点击目标
+    // 不再做坐标预判断，因为 CGEvent 和 NSScreen 坐标系不同，多屏时极易出错
     let location = event.location
-    let screenHeight = NSScreen.main?.frame.height ?? 0
-    if location.y < (screenHeight - 80) { return Unmanaged.passUnretained(event) }
-    
-    // 仅当点击在 Dock 区域时才进行 AX 查询（减少 CPU 开销）
     let systemWide = AXUIElementCreateSystemWide()
     var element: AXUIElement?
     let result = AXUIElementCopyElementAtPosition(systemWide, Float(location.x), Float(location.y), &element)
