@@ -314,12 +314,14 @@ class HotkeyRecorderWindow: NSWindow {
 
 func minimizeAllWindows() {
     print("Action: Minimizing all windows...")
-    let workspace = NSWorkspace.shared
-    for app in workspace.runningApplications {
-        if app.bundleIdentifier == Bundle.main.bundleIdentifier { continue }
-        if app.activationPolicy == .regular {
-            let appRef = AXUIElementCreateApplication(app.processIdentifier)
-            minimizeAppWindows(appRef)
+    DispatchQueue.global(qos: .userInteractive).async {
+        let workspace = NSWorkspace.shared
+        for app in workspace.runningApplications {
+            if app.bundleIdentifier == Bundle.main.bundleIdentifier { continue }
+            if app.activationPolicy == .regular {
+                let appRef = AXUIElementCreateApplication(app.processIdentifier)
+                minimizeAppWindows(appRef)
+            }
         }
     }
 }
@@ -348,7 +350,6 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
     guard type == .leftMouseDown else { return Unmanaged.passUnretained(event) }
     
     // 直接使用 Accessibility API 判断点击目标
-    // 不再做坐标预判断，因为 CGEvent 和 NSScreen 坐标系不同，多屏时极易出错
     let location = event.location
     let systemWide = AXUIElementCreateSystemWide()
     var element: AXUIElement?
@@ -378,29 +379,89 @@ func isDockIcon(element: AXUIElement) -> Bool {
     return false
 }
 
+// MARK: - App Cache Manager
+class AppCache {
+    static let shared = AppCache()
+    private var apps: [String: NSRunningApplication] = [:]
+    private let queue = DispatchQueue(label: "com.user.GetBackMyWindows.AppCache", qos: .userInteractive)
+    
+    init() {
+        refresh()
+        // Listen for app launch/terminate events to keep cache updated
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        center.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+    }
+    
+    @objc func refresh() {
+        queue.async {
+            let running = NSWorkspace.shared.runningApplications
+            var newCache: [String: NSRunningApplication] = [:]
+            for app in running {
+                if let name = app.localizedName {
+                    newCache[name] = app
+                }
+            }
+            self.apps = newCache
+        }
+    }
+    
+    func getApp(named name: String) -> NSRunningApplication? {
+        return queue.sync { apps[name] }
+    }
+}
+
+// Global variable for debounce
+var lastClickTime: TimeInterval = 0
+var lastClickedAppPID: pid_t = 0
+
+// ... (existing code)
+
 func handleDockIconClick(element: AXUIElement) -> Bool {
     var title: CFTypeRef?
     AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
     guard let appName = title as? String else { return false }
     
-    let workspace = NSWorkspace.shared
-    guard let runningApp = workspace.runningApplications.first(where: { $0.localizedName == appName }) else { return false }
+    // Optimization 1: Use cached app lookup instead of NSWorkspace iteration
+    guard let runningApp = AppCache.shared.getApp(named: appName) else { return false }
+    
+    // Optimization 2: Debounce rapid clicks on the SAME app
+    let now = Date().timeIntervalSince1970
+    if runningApp.processIdentifier == lastClickedAppPID && (now - lastClickTime) < 0.1 {
+        // Ignore clicks faster than 100ms on the same icon
+        return true // Still return true to consume event
+    }
+    
+    // Update state
+    lastClickTime = now
+    lastClickedAppPID = runningApp.processIdentifier
+    
+    // Quick check: If app has no visible windows on screen, don't try to minimize.
+    if !hasVisibleWindows(runningApp) {
+        return false
+    }
     
     if runningApp.isActive {
-        let appRef = AXUIElementCreateApplication(runningApp.processIdentifier)
-        var windowsRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-           let windows = windowsRef as? [AXUIElement] {
-            var didMinimize = false
-            for window in windows {
-                var minVal: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minVal)
-                if let m = minVal as? Bool, !m {
-                    AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, true as CFTypeRef)
-                    didMinimize = true
-                }
+        // Move heavy AX work to background thread to avoid frame drops
+        DispatchQueue.global(qos: .userInteractive).async {
+            let appRef = AXUIElementCreateApplication(runningApp.processIdentifier)
+            minimizeAppWindows(appRef)
+        }
+        return true
+    }
+    return false
+}
+
+func hasVisibleWindows(_ app: NSRunningApplication) -> Bool {
+    let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+    guard let infoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return false }
+    
+    for entry in infoList {
+        if let ownerPID = entry[kCGWindowOwnerPID as String] as? Int32, ownerPID == app.processIdentifier {
+            // Check if window layer is normal (0)
+            if let layer = entry[kCGWindowLayer as String] as? Int, layer == 0 {
+                return true
             }
-            return didMinimize
         }
     }
     return false
