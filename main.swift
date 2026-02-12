@@ -347,6 +347,11 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
         return Unmanaged.passUnretained(event)
     }
     
+    // Check for re-posted event to avoid infinite loops (Scheme A)
+    if event.getIntegerValueField(.eventSourceUserData) == kUserDataMagic {
+        return Unmanaged.passUnretained(event)
+    }
+
     guard type == .leftMouseDown else { return Unmanaged.passUnretained(event) }
     
     // 直接使用 Accessibility API 判断点击目标
@@ -356,8 +361,11 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
     let result = AXUIElementCopyElementAtPosition(systemWide, Float(location.x), Float(location.y), &element)
     
     if result == .success, let target = element, isDockIcon(element: target) {
+        // Optimization (Hybrid): Conditional Interception & Async Execution
+        // Only intercept if we actually intend to minimize windows.
+        // Otherwise, let the system handle drag, long press, etc.
         if handleDockIconClick(element: target) {
-            return nil  // 拦截事件，阻止 Dock 的默认激活行为
+            return nil // Swallow event only if we minimized
         }
     }
     return Unmanaged.passUnretained(event)
@@ -411,7 +419,11 @@ class AppCache {
     }
 }
 
-// Global variable for debounce
+// Global serial queue for click processing to prevent race conditions
+let clickProcessingQueue = DispatchQueue(label: "com.user.GetBackMyWindows.ClickQueue", qos: .userInteractive)
+let kUserDataMagic: Int64 = 0x55AA
+
+// Global variable for debounce (accessed only within clickProcessingQueue)
 var lastClickTime: TimeInterval = 0
 var lastClickedAppPID: pid_t = 0
 
@@ -419,37 +431,56 @@ var lastClickedAppPID: pid_t = 0
 
 func handleDockIconClick(element: AXUIElement) -> Bool {
     var title: CFTypeRef?
-    AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
-    guard let appName = title as? String else { return false }
+    let result = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
     
-    // Optimization 1: Use cached app lookup instead of NSWorkspace iteration
-    guard let runningApp = AppCache.shared.getApp(named: appName) else { return false }
+    // 1. Identify App
+    // 如果无法获取 App 名称，交给系统处理（不拦截）
+    guard result == .success, let appName = title as? String,
+          let runningApp = AppCache.shared.getApp(named: appName) else {
+        return false
+    }
     
-    // Optimization 2: Debounce rapid clicks on the SAME app
+    // 2. Debounce rapid clicks on the SAME app
     let now = Date().timeIntervalSince1970
     if runningApp.processIdentifier == lastClickedAppPID && (now - lastClickTime) < 0.1 {
         // Ignore clicks faster than 100ms on the same icon
-        return true // Still return true to consume event
+        return true // Still return true to consume event (prevent accidental double activation)
     }
     
     // Update state
     lastClickTime = now
     lastClickedAppPID = runningApp.processIdentifier
     
-    // Quick check: If app has no visible windows on screen, don't try to minimize.
-    if !hasVisibleWindows(runningApp) {
-        return false
+    // 3. Logic: Minimize or Pass Through
+    if runningApp.isActive {
+        // App is frontmost
+        if hasVisibleWindows(runningApp) {
+            // ACTION: Minimize
+            // Move heavy AX work to background thread
+            clickProcessingQueue.async {
+                minimizeAppWindows(runningApp)
+            }
+            return true // Intercept event (swallow click)
+        }
     }
     
-    if runningApp.isActive {
-        // Move heavy AX work to background thread to avoid frame drops
-        DispatchQueue.global(qos: .userInteractive).async {
-            let appRef = AXUIElementCreateApplication(runningApp.processIdentifier)
-            minimizeAppWindows(appRef)
-        }
-        return true
-    }
+    // Fallback: Let system handle (Activate, Drag, Context Menu)
     return false
+}
+
+func minimizeAppWindows(_ app: NSRunningApplication) {
+    let appRef = AXUIElementCreateApplication(app.processIdentifier)
+    minimizeAppWindows(appRef)
+}
+
+func simulateClick(at point: CGPoint) {
+    guard let downEvent = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left) else { return }
+    downEvent.setIntegerValueField(.eventSourceUserData, value: kUserDataMagic)
+    downEvent.post(tap: .cghidEventTap)
+    
+    guard let upEvent = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else { return }
+    upEvent.setIntegerValueField(.eventSourceUserData, value: kUserDataMagic)
+    upEvent.post(tap: .cghidEventTap)
 }
 
 func hasVisibleWindows(_ app: NSRunningApplication) -> Bool {
