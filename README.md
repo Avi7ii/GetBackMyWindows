@@ -2,7 +2,7 @@
 
 <img src="icon.png" width="128" />
 
-# 🪟 GetBackMyWindows
+# GetBackMyWindows
 
 <p>
   <strong>0占用0负载的Mac高效窗口管理——还给你更高效的Windows系统窗口策略 | One-click minimize, instant desktop zen</strong>
