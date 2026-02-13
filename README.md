@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="icon.png" width="128" />
+
 # 🪟 GetBackMyWindows
 
 <p>
