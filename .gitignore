@@ -32,3 +32,6 @@ Package.resolved
 *.swp
 *.swo
 *~
+
+# Agent directory
+.agent/
