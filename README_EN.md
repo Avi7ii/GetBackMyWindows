@@ -107,12 +107,16 @@ One step to efficiency.
 
 </div>
 
+<div align="left">
+
 ```bash
 git clone https://github.com/Avi7ii/GetBackMyWindows.git
 cd GetBackMyWindows
 chmod +x build.sh
 ./build.sh
 ```
+
+</div>
 
 <br>
 <br>
