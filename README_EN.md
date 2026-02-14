@@ -81,23 +81,29 @@ This is not just a tool; it's a tribute to native macOS performance.
 
 ## 📦 Installation
 
-</div>
-
 One step to efficiency.
 
 ### Option 1: Download (Recommended)
 <br>
+<div align="center">
 <a href="https://github.com/Avi7ii/GetBackMyWindows/releases">
     <img src="https://img.shields.io/badge/Download-Latest_Release-blue?style=for-the-badge&logo=github&logoColor=white&h=80" alt="Download Latest Release" height="40">
 </a>
+</div>
 <br>
 <br>
+
+</div>
 
 1. Download the latest `GetBackMyWindows.app.zip`
 2. Unzip and drag into your `Applications` folder
 3. Grant "Accessibility" permission in System Settings when prompted
 
+<div align="center">
+
 ### Option 2: Build form Source
+
+</div>
 ```bash
 git clone https://github.com/Avi7ii/GetBackMyWindows.git
 cd GetBackMyWindows

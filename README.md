@@ -81,23 +81,29 @@
 
 ## 📦 极速安装
 
-</div>
-
 只需一步，即可拥有。
 
 ### 方式一：下载预编译版 (推荐)
 <br>
+<div align="center">
 <a href="https://github.com/Avi7ii/GetBackMyWindows/releases">
     <img src="https://img.shields.io/badge/Download-Latest_Release-blue?style=for-the-badge&logo=github&logoColor=white&h=80" alt="Download Latest Release" height="40">
 </a>
+</div>
 <br>
 <br>
+
+</div>
 
 1. 下载最新的 `GetBackMyWindows.app.zip`
 2. 解压并拖入 `Applications` 文件夹
 3. 如果遇到权限提示，请在「系统设置 -> 隐私与安全性 -> 辅助功能」中勾选
 
+<div align="center">
+
 ### 方式二：极客编译
+
+</div>
 ```bash
 git clone https://github.com/Avi7ii/GetBackMyWindows.git
 cd GetBackMyWindows
