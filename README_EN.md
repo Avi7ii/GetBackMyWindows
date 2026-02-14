@@ -81,6 +81,8 @@ This is not just a tool; it's a tribute to native macOS performance.
 
 ## 📦 Installation
 
+</div>
+
 One step to efficiency.
 
 ### Option 1: Download (Recommended)
@@ -105,6 +107,11 @@ chmod +x build.sh
 
 <br>
 <br>
+
+<br>
+<br>
+
+<div align="center">
 
 ## 🎮 How to Use
 
