@@ -45,4 +45,11 @@ codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "✅ Build Successful!"
 echo "📂 App located at: $APP_BUNDLE"
-echo "👉 You can drag '$APP_NAME.app' to your Applications folder."
+
+# 6. Create Zip for Release (Preserves permissions)
+ZIP_PATH="$BUILD_DIR/$APP_NAME.app.zip"
+echo "📦 Zipping for Release..."
+ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+
+echo "✅ Build & Package Successful!"
+echo "👉 Release File: $ZIP_PATH (Upload this to GitHub)"

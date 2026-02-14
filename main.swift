@@ -356,6 +356,14 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
     
     // 直接使用 Accessibility API 判断点击目标
     let location = event.location
+    
+    // Performance Optimization (V7): Geometric Pre-check
+    // AXUIElementCopyElementAtPosition is expensive (IPC). 
+    // Only perform it if the mouse is likely over the Dock (outside visible frame).
+    if !isMouseInDockRegion(location) {
+        return Unmanaged.passUnretained(event)
+    }
+    
     let systemWide = AXUIElementCreateSystemWide()
     var element: AXUIElement?
     let result = AXUIElementCopyElementAtPosition(systemWide, Float(location.x), Float(location.y), &element)
@@ -369,6 +377,43 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
         }
     }
     return Unmanaged.passUnretained(event)
+}
+
+func isMouseInDockRegion(_ location: CGPoint) -> Bool {
+    // Check if the point is within any screen's "safe area" (visibleFrame).
+    // If it is inside visibleFrame, it's NOT on the Dock (Dock is excluded from visibleFrame).
+    // If it is OUTSIDE visibleFrame but INSIDE frame, it's potentially on the Dock (or Menu Bar).
+    
+    for screen in NSScreen.screens {
+        // Convert CoreGraphics geometric point (top-left 0,0) to Cocoa (bottom-left 0,0)
+        // Note: location is CGEvent location (top-left origin).
+        // NSScreen.frame is bottom-left origin? 
+        // Actually simplest is: Check if point is outside the "User Space".
+        
+        // Let's stick to CG coordinates for simplicity if possible, but NSScreen uses Cocoa coords.
+        // We need to flip Y.
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else { return true }
+        let cocoaY = primaryScreenHeight - location.y
+        let cocoaPoint = NSPoint(x: location.x, y: cocoaY)
+        
+        if NSPointInRect(cocoaPoint, screen.frame) {
+            // Point is on this screen.
+            // Check if it is inside the usable area (excluding Dock/Menu)
+            if NSPointInRect(cocoaPoint, screen.visibleFrame) {
+                return false // It's in the content area, definitively NOT the Dock.
+            }
+            // It's on screen but outside visible area -> Dock or Menu Bar.
+            // Heuristic: Menu Bar is usually at top (high Cocoa Y). Dock is at bottom/side.
+            // We assume Dock if it's not the top menu bar.
+            // Simple check: Is it the Menu Bar?
+            // Menu bar is usually height ~24.
+            if cocoaY > (screen.frame.maxY - 25) {
+                return false // It's the Menu Bar
+            }
+            return true // It's likely the Dock
+        }
+    }
+    return false // Fallback: If off-screen or undetected, let's be safe and say No (or True? False is safer for perfs)
 }
 
 func isDockIcon(element: AXUIElement) -> Bool {
@@ -430,42 +475,207 @@ var lastClickedAppPID: pid_t = 0
 // ... (existing code)
 
 func handleDockIconClick(element: AXUIElement) -> Bool {
-    var title: CFTypeRef?
-    let result = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
+    // Strategy 1: Identify by URL
+    var urlRef: CFTypeRef?
+    let urlResult = AXUIElementCopyAttributeValue(element, "AXURL" as CFString, &urlRef)
     
-    // 1. Identify App
-    // 如果无法获取 App 名称，交给系统处理（不拦截）
-    guard result == .success, let appName = title as? String,
-          let runningApp = AppCache.shared.getApp(named: appName) else {
-        return false
-    }
+    var candidates: [NSRunningApplication] = []
+    var isWeChatHelper = false
     
-    // 2. Debounce rapid clicks on the SAME app
-    let now = Date().timeIntervalSince1970
-    if runningApp.processIdentifier == lastClickedAppPID && (now - lastClickTime) < 0.1 {
-        // Ignore clicks faster than 100ms on the same icon
-        return true // Still return true to consume event (prevent accidental double activation)
-    }
-    
-    // Update state
-    lastClickTime = now
-    lastClickedAppPID = runningApp.processIdentifier
-    
-    // 3. Logic: Minimize or Pass Through
-    if runningApp.isActive {
-        // App is frontmost
-        if hasVisibleWindows(runningApp) {
-            // ACTION: Minimize
-            // Move heavy AX work to background thread
-            clickProcessingQueue.async {
-                minimizeAppWindows(runningApp)
-            }
-            return true // Intercept event (swallow click)
+    if urlResult == .success, let url = urlRef as? URL {
+        // Special Handling for WeChat Helper
+        if url.absoluteString.contains("WeChatAppEx.app") {
+            isWeChatHelper = true
+        }
+        
+        let apps = NSWorkspace.shared.runningApplications
+        candidates = apps.filter { app in
+            app.bundleURL == url || app.executableURL == url
         }
     }
     
-    // Fallback: Let system handle (Activate, Drag, Context Menu)
+    // Debug log
+    if isWeChatHelper {
+        print("Detected WeChat Helper click")
+    }
+    
+    if isWeChatHelper {
+        // WeChat Logic V4: Fully Async & Full State Management
+        // 1. Intercept immediately to prevent blocking/timeout
+        // 2. Determine state (Minimized? Active? Background?)
+        // 3. Perform Action (Restore, Minimize, Raise)
+        
+        clickProcessingQueue.async {
+            // Find Main WeChat App (PID 3477)
+            guard let mainApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.tencent.xinWeChat" }) else { return }
+            
+            let appRef = AXUIElementCreateApplication(mainApp.processIdentifier)
+            var windowsRef: CFTypeRef?
+            
+            // Get ALL windows
+            guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                  let windows = windowsRef as? [AXUIElement] else {
+                // Fallback: Activate app if we can't get windows
+                mainApp.activate(options: .activateIgnoringOtherApps)
+                return
+            }
+            
+            var targetWindow: AXUIElement?
+            
+            // Find the "Green Window" (Heuristic: Title != "微信" && Title != "WeChat")
+            // Iterate to find the first matching window
+            for window in windows {
+                var titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+                let title = titleRef as? String ?? ""
+                
+                if !title.isEmpty && title != "微信" && title != "WeChat" {
+                    targetWindow = window
+                    break
+                }
+            }
+            
+            if let win = targetWindow {
+                // Check Is Minimized
+                var minRef: CFTypeRef?
+                let _ = AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef)
+                let isMinimized = (minRef as? Bool) ?? false
+                
+                if isMinimized {
+                    // CASE 1: Restore
+                    AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+                    AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+                    mainApp.activate(options: .activateIgnoringOtherApps)
+                } else {
+                    // Check if it is the KEY window
+                    var focusedRef: CFTypeRef?
+                    var isKey = false
+                    if mainApp.isActive {
+                        if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success {
+                            // Compare AXUIElement equality (CFEqual)
+                            if CFEqual(focusedRef as! AXUIElement, win) {
+                                isKey = true
+                            }
+                        }
+                    }
+                    
+                    if isKey {
+                        // CASE 2: Minimize (Already frontmost)
+                        AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, true as CFTypeRef)
+                    } else {
+                        // CASE 3: Activate (Visible but background/inactive)
+                        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+                        mainApp.activate(options: .activateIgnoringOtherApps)
+                    }
+                }
+            } else {
+                // No specific window found, just bring main app to front
+                mainApp.activate(options: .activateIgnoringOtherApps)
+            }
+        }
+        return true
+    }
+
+    // Standard Logic for other apps
+    if candidates.isEmpty {
+        var title: CFTypeRef?
+        let titleResult = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
+        
+        if titleResult == .success, let appName = title as? String {
+             if let app = AppCache.shared.getApp(named: appName) {
+                 candidates.append(app)
+             }
+        }
+    }
+    
+    // Standard Minimize Logic
+    for app in candidates {
+        if app.isActive {
+            // Special Logic for WeChat Main Icon
+            if app.bundleIdentifier == "com.tencent.xinWeChat" {
+                if hasVisibleWindows(app) {
+                     // Debounce logic
+                     let now = Date().timeIntervalSince1970
+                     if app.processIdentifier == lastClickedAppPID && (now - lastClickTime) < 0.1 {
+                         return true
+                     }
+                     lastClickTime = now
+                     lastClickedAppPID = app.processIdentifier
+                     
+                     clickProcessingQueue.async {
+                         handleWeChatMainClick(app)
+                     }
+                     return true
+                }
+            }
+            
+            if hasVisibleWindows(app) {
+                let now = Date().timeIntervalSince1970
+                if app.processIdentifier == lastClickedAppPID && (now - lastClickTime) < 0.1 {
+                    return true
+                }
+                lastClickTime = now
+                lastClickedAppPID = app.processIdentifier
+                
+                clickProcessingQueue.async {
+                    minimizeAppWindows(app)
+                }
+                return true
+            }
+        }
+    }
+    
     return false
+}
+
+func handleWeChatMainClick(_ app: NSRunningApplication) {
+    let appRef = AXUIElementCreateApplication(app.processIdentifier)
+    
+    // 1. Get Focused Window
+    var focusedWindow: CFTypeRef?
+    if AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success {
+        let window = focusedWindow as! AXUIElement
+        
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+        let title = titleRef as? String ?? ""
+        
+        // 2. Decide Action
+        // If Title IS "微信" or "WeChat" -> Minimize it (User is on main screen, wants to hide app)
+        if title == "微信" || title == "WeChat" {
+            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, true as CFTypeRef)
+        } else {
+            // User is on a Helper Window (Article/MiniProgram) but clicked Main Icon.
+            // They likely want to Go Back to Main Chat.
+            // Action: Activate the "微信" window
+            activateWeChatMainWindow(appRef, app)
+        }
+    } else {
+        // Fallback: Just minimize if we can't determine focus
+        minimizeAppWindows(app)
+    }
+}
+
+func activateWeChatMainWindow(_ appRef: AXUIElement, _ app: NSRunningApplication) {
+    var windowsRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+       let windows = windowsRef as? [AXUIElement] {
+        for window in windows {
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+            let title = titleRef as? String ?? ""
+            
+            if title == "微信" || title == "WeChat" {
+                // Found Main Window -> Raise it
+                AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
+                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                app.activate(options: .activateIgnoringOtherApps)
+                return
+            }
+        }
+    }
+    // If not found, just activate the app
+    app.activate(options: .activateIgnoringOtherApps)
 }
 
 func minimizeAppWindows(_ app: NSRunningApplication) {
