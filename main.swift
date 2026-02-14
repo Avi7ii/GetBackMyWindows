@@ -103,26 +103,124 @@ class HotkeyManager {
     }
 }
 
+// MARK: - Update Checker
+class UpdateChecker {
+    static let shared = UpdateChecker()
+    static let currentVersion = "2.0.0"
+    
+    private let defaults = UserDefaults.standard
+    private let keyLastCheck = "LastUpdateCheckDate"
+    private let keyLatestVersion = "LatestVersionAvailable"
+    private let keyAutoCheck = "AutoCheckUpdates"
+    
+    var isAutoCheckEnabled: Bool {
+        get { defaults.object(forKey: keyAutoCheck) as? Bool ?? true } // Default to true
+        set { defaults.set(newValue, forKey: keyAutoCheck) }
+    }
+    
+    var latestVersionAvailable: String? {
+        get { defaults.string(forKey: keyLatestVersion) }
+        set { defaults.set(newValue, forKey: keyLatestVersion) }
+    }
+    
+    func checkForUpdates(force: Bool = false, completion: ((Bool) -> Void)? = nil) {
+        if !force {
+            if !isAutoCheckEnabled {
+                print("UpdateChecker: Auto-check disabled by user.")
+                completion?(false)
+                return
+            }
+            
+            if let lastCheck = defaults.object(forKey: keyLastCheck) as? Date {
+                // Check if 24 hours have passed (86400 seconds)
+                if Date().timeIntervalSince(lastCheck) < 86400 {
+                    print("UpdateChecker: Check skipped (Last check: \(lastCheck))")
+                    completion?(false)
+                    return
+                }
+            }
+        }
+        
+        print("UpdateChecker: Checking for updates...")
+        guard let url = URL(string: "https://api.github.com/repos/Avi7ii/GetBackMyWindows/releases/latest") else {
+            completion?(false)
+            return
+        }
+        
+        let task = URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
+            // Record check time even if it fails, to prevent spamming
+            self.defaults.set(Date(), forKey: self.keyLastCheck)
+            
+            guard let data = data, error == nil else {
+                print("UpdateChecker: Network error - \(error?.localizedDescription ?? "Unknown")")
+                completion?(false)
+                return
+            }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                   let tagName = json["tag_name"] as? String {
+                    
+                    let cleanTag = tagName.replacingOccurrences(of: "v", with: "")
+                    print("UpdateChecker: Latest version found: \(cleanTag)")
+                    
+                    self.latestVersionAvailable = cleanTag
+                    
+                    // Simple string comparison for now. Ideally should parse semver.
+                    // Assuming format "1.2.0" vs "1.2.1"
+                    let hasNew = cleanTag != UpdateChecker.currentVersion
+                    completion?(hasNew)
+                    
+                    if hasNew {
+                        DispatchQueue.main.async {
+                            if let delegate = NSApp.delegate as? AppDelegate {
+                                delegate.updateMenu()
+                            }
+                        }
+                    }
+                } else {
+                    completion?(false)
+                }
+            } catch {
+                print("UpdateChecker: JSON Parse Error")
+                completion?(false)
+            }
+        }
+        task.resume()
+    }
+}
+
 // MARK: - Main Application Delegate
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var eventTap: CFMachPort?
     var runLoopSource: CFRunLoopSource?
-    var recordingWindow: NSWindow?
     var accessibilityTimer: Timer?  // 权限监控定时器
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
+        UpdateChecker.shared.checkForUpdates() // Check on launch (debounced)
+        
+        // Ensure AutoHideManager is active (observers)
+        _ = AutoHideManager.shared
+        
+        // Show Settings if it's likely the first run (no permission)
+        // or just always checking permissions.
         checkAccessibilityPermissions()
+        
         HotkeyManager.shared.registerHotkey()
         setupEventTap()
         
         // 防止 App Nap (关键修复)
-        //由于 EventTap 需要实时响应（否则会被系统判定超时而禁用），必须禁止 App Nap
         ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Global Event Listener")
         
-        // 睡眠/唤醒监听
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
+        
+        if !AXIsProcessTrusted() {
+             SettingsWindowController.shared.show(tab: "General")
+        }
     }
     
     @objc func didWake() {
@@ -131,6 +229,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.setupEventTap()
         }
+    }
+    
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            SettingsWindowController.shared.show()
+        }
+        return true
     }
     
     func setupStatusItem() {
@@ -153,6 +258,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
         
+        // 0. Version Info
+        let versionItem = NSMenuItem(title: "Current Version: \(UpdateChecker.currentVersion)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+        
+        if let newVersion = UpdateChecker.shared.latestVersionAvailable, 
+           newVersion != UpdateChecker.currentVersion {
+            let updateItem = NSMenuItem(title: "🚀 New Version Available: \(newVersion)", action: #selector(openUpdatePage), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        }
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // 1. Info Items
         let info1 = NSMenuItem(title: "🖱️ Click Dock Icon → Minimize", action: nil, keyEquivalent: "")
         info1.isEnabled = false
@@ -166,18 +285,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
         
         // 2. Settings
-        let recordItem = NSMenuItem(title: "Change Hotkey...", action: #selector(openRecorder), keyEquivalent: "k")
+        let recordItem = NSMenuItem(title: "Preferences...", action: #selector(openSettings), keyEquivalent: ",")
         menu.addItem(recordItem)
 
         let autoStartItem = NSMenuItem(title: "Start at Login", action: #selector(toggleAutoStart), keyEquivalent: "")
         autoStartItem.state = AutoStartManager.shared.isEnabled ? .on : .off
         menu.addItem(autoStartItem)
         
+        menu.addItem(NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdatesManually), keyEquivalent: ""))
+        
         menu.addItem(NSMenuItem.separator())
         
         // 3. Restart & Quit
         menu.addItem(NSMenuItem(title: "Restart", action: #selector(restartApp), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+    
+    @objc func checkForUpdatesManually() {
+        UpdateChecker.shared.checkForUpdates(force: true) { [weak self] hasUpdate in
+            DispatchQueue.main.async {
+                self?.updateMenu()
+                if !hasUpdate {
+                    let alert = NSAlert()
+                    alert.messageText = "You're up to date!"
+                    alert.informativeText = "GetBackMyWindows \(UpdateChecker.currentVersion) is currently the newest version available."
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+    
+    @objc func openUpdatePage() {
+        if let url = URL(string: "https://github.com/Avi7ii/GetBackMyWindows/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
     }
     
     @objc func restartApp() {
@@ -195,39 +338,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sender.state = newState ? .on : .off
     }
     
-    @objc func openRecorder() {
-        if let w = recordingWindow {
-            w.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        
-        let window = HotkeyRecorderWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 180),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.center()
-        window.title = "Set Global Hotkey"
-        window.isReleasedWhenClosed = false
-        
-        let label = NSTextField(labelWithString: "Press new key combination...")
-        label.font = NSFont.systemFont(ofSize: 16)
-        label.alignment = .center
-        label.frame = NSRect(x: 20, y: 80, width: 260, height: 30)
-        window.contentView?.addSubview(label)
-        
-        let subLabel = NSTextField(labelWithString: "Press 'Esc' to cancel")
-        subLabel.font = NSFont.systemFont(ofSize: 12)
-        subLabel.textColor = .secondaryLabelColor
-        subLabel.alignment = .center
-        subLabel.frame = NSRect(x: 20, y: 50, width: 260, height: 20)
-        window.contentView?.addSubview(subLabel)
-        
-        self.recordingWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+    @objc func openSettings() {
+        SettingsWindowController.shared.show()
     }
     
     // MARK: - Event Tap
@@ -262,65 +374,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     
     func checkAccessibilityPermissions() {
-        let trusted = AXIsProcessTrusted()
-        
-        if !trusted {
-            // 弹出系统权限请求对话框
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-            
-            // 启动定时器监控权限变化
-            accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-                if AXIsProcessTrusted() {
-                    timer.invalidate()
-                    self?.accessibilityTimer = nil
-                    print("Accessibility granted, restarting...")
-                    self?.restartApp()
-                }
-            }
-        }
+        // Now handled by SettingsWindowController -> GeneralViewController
     }
 }
 
-// MARK: - Hotkey Recorder Window
-class HotkeyRecorderWindow: NSWindow {
-    override var canBecomeKey: Bool { return true }
-    
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { self.close(); return } 
-        if event.modifierFlags.contains(.command) && event.keyCode == 55 { return }
-        if event.modifierFlags.contains(.control) && event.keyCode == 59 { return }
-        if event.modifierFlags.contains(.option) && event.keyCode == 58 { return }
-        if event.modifierFlags.contains(.capsLock) { return }
-        
-        var carbonMods: UInt32 = 0
-        if event.modifierFlags.contains(.command) { carbonMods |= UInt32(cmdKey) }
-        if event.modifierFlags.contains(.control) { carbonMods |= UInt32(controlKey) }
-        if event.modifierFlags.contains(.option)  { carbonMods |= UInt32(optionKey) }
-        if event.modifierFlags.contains(.shift)   { carbonMods |= UInt32(shiftKey) }
-        
-        HotkeyManager.shared.currentKeyCode = Int(event.keyCode)
-        HotkeyManager.shared.currentModifiers = Int(carbonMods)
-        HotkeyManager.shared.registerHotkey()
-        
-        self.close()
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.recordingWindow = nil
-        }
-    }
-}
+// MARK: - Native Settings GUI
 
-// MARK: - Logic & Helpers
+// GUI implementation moved to SettingsUI.swift
 
 func minimizeAllWindows() {
     print("Action: Minimizing all windows...")
     DispatchQueue.global(qos: .userInteractive).async {
         let workspace = NSWorkspace.shared
+        // 获取自身进程 ID
+        let myPID = NSRunningApplication.current.processIdentifier
+        
         for app in workspace.runningApplications {
-            if app.bundleIdentifier == Bundle.main.bundleIdentifier { continue }
             if app.activationPolicy == .regular {
-                let appRef = AXUIElementCreateApplication(app.processIdentifier)
-                minimizeAppWindows(appRef)
+                if app.processIdentifier == myPID {
+                    // CASE: Self (Must be on Main Thread to avoid crash)
+                    DispatchQueue.main.async {
+                        // 使用原生 AppKit API 安全最小化
+                        for window in NSApp.windows {
+                            if window.isVisible && !window.isMiniaturized {
+                                window.miniaturize(nil)
+                            }
+                        }
+                    }
+                } else {
+                    // CASE: Other Apps (Use Accessibility / AX API)
+                    let appRef = AXUIElementCreateApplication(app.processIdentifier)
+                    minimizeAppWindows(appRef)
+                }
             }
         }
     }
@@ -336,9 +421,29 @@ func minimizeAppWindows(_ appRef: AXUIElement) {
     }
 }
 
+// Event Tap Circuit Breaker
+var tapRestartCount = 0
+var lastTapRestartTime: TimeInterval = 0
+
 func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
     // 处理 tap 被系统禁用的情况（App Nap、超时等）
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        let now = Date().timeIntervalSince1970
+        if now - lastTapRestartTime < 10 {
+            tapRestartCount += 1
+        } else {
+            tapRestartCount = 1
+        }
+        lastTapRestartTime = now
+        
+        if tapRestartCount > 5 {
+            print("EventTap: ⚠️ Circuit Breaker Triggered (Too many restarts). Stopping Event Tap.")
+            // Do not restart. Let it die to save system resources.
+            // Optionally notify user via UI in future updates.
+            return Unmanaged.passUnretained(event)
+        }
+        
+        print("EventTap: Disabled by System (\(type.rawValue)). Restarting... (Attempt \(tapRestartCount)/5)")
         DispatchQueue.main.async {
             if let delegate = NSApp.delegate as? AppDelegate {
                 delegate.setupEventTap()
@@ -438,29 +543,28 @@ class AppCache {
     private var apps: [String: NSRunningApplication] = [:]
     private let queue = DispatchQueue(label: "com.user.GetBackMyWindows.AppCache", qos: .userInteractive)
     
-    init() {
-        refresh()
-        // Listen for app launch/terminate events to keep cache updated
-        let center = NSWorkspace.shared.notificationCenter
-        center.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
-        center.addObserver(self, selector: #selector(refresh), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
-    }
+    // Lazy load: No init observers needed
     
-    @objc func refresh() {
-        queue.async {
-            let running = NSWorkspace.shared.runningApplications
-            var newCache: [String: NSRunningApplication] = [:]
-            for app in running {
-                if let name = app.localizedName {
-                    newCache[name] = app
-                }
+    private func refreshSync() {
+        let running = NSWorkspace.shared.runningApplications
+        var newCache: [String: NSRunningApplication] = [:]
+        for app in running {
+            if let name = app.localizedName {
+                newCache[name] = app
             }
-            self.apps = newCache
         }
+        self.apps = newCache
     }
     
     func getApp(named name: String) -> NSRunningApplication? {
-        return queue.sync { apps[name] }
+        return queue.sync {
+            if let cached = apps[name], !cached.isTerminated {
+                return cached
+            }
+            // Not found or terminated, refresh cache
+            refreshSync()
+            return apps[name]
+        }
     }
 }
 
@@ -475,7 +579,8 @@ var lastClickedAppPID: pid_t = 0
 // ... (existing code)
 
 func handleDockIconClick(element: AXUIElement) -> Bool {
-    // Strategy 1: Identify by URL
+    return autoreleasepool {
+        // Strategy 1: Identify by URL
     var urlRef: CFTypeRef?
     let urlResult = AXUIElementCopyAttributeValue(element, "AXURL" as CFString, &urlRef)
     
@@ -491,6 +596,21 @@ func handleDockIconClick(element: AXUIElement) -> Bool {
         let apps = NSWorkspace.shared.runningApplications
         candidates = apps.filter { app in
             app.bundleURL == url || app.executableURL == url
+        }
+        
+        // Handle Self-Click (Minimize if visible, otherwise let system restore)
+        if let selfApp = candidates.first(where: { $0.bundleIdentifier == Bundle.main.bundleIdentifier }) {
+            if hasVisibleWindows(selfApp) {
+                DispatchQueue.main.async {
+                    for window in NSApp.windows {
+                        if window.isVisible && !window.isMiniaturized {
+                            window.miniaturize(nil)
+                        }
+                    }
+                }
+                return true // Swallow event to prevent system from interfering
+            }
+            return false // Let system handle restore/activate
         }
     }
     
@@ -625,7 +745,8 @@ func handleDockIconClick(element: AXUIElement) -> Bool {
         }
     }
     
-    return false
+        return false
+    }
 }
 
 func handleWeChatMainClick(_ app: NSRunningApplication) {
