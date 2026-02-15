@@ -66,11 +66,6 @@
 <br>
 <br>
 
-<br>
-<br>
-
-<br>
-<br>
 
 ## 📦 极速安装
 
@@ -112,8 +107,6 @@ chmod +x build.sh
 <br>
 <br>
 
-<br>
-<br>
 
 <div align="center">
 
