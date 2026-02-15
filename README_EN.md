@@ -28,11 +28,6 @@
 
 </div>
 
-<br>
-<br>
-
-<br>
-<br>
 
 <br>
 <br>
@@ -75,11 +70,6 @@ This is not just a tool; it's a tribute to native macOS performance.
 <br>
 <br>
 
-<br>
-<br>
-
-<br>
-<br>
 
 ## 📦 Installation
 
@@ -137,8 +127,6 @@ chmod +x build.sh
 <br>
 <br>
 
-<br>
-<br>
 
 <br>
 <br>
