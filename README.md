@@ -24,8 +24,10 @@
 <br>
 
 # 专为 Windows 移民打造
-### 解决 Mac 窗口管理的 "水土不服"
 
+### 解决 Mac 窗口管理的 "水土不服"
+<br>
+<br>
 
 
 <div align="center">
