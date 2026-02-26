@@ -100,8 +100,6 @@ echo "🔏 Signing with identity: $CERT_NAME"
 codesign --sign "$CERT_NAME" \
          --entitlements "$SRC_DIR/GetBackMyWindows.entitlements" \
          --identifier "com.user.GetBackMyWindows" \
-         --options runtime \
-         --timestamp \
          --verbose \
          --force \
          "$TEMP_APP_BUNDLE"
@@ -136,7 +134,7 @@ echo "📂 App located at: $APP_BUNDLE"
 # 6. Create Zip for Release (Preserves permissions)
 ZIP_PATH="$BUILD_DIR/$APP_NAME.app.zip"
 echo "📦 Zipping for Release..."
-ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+ditto -c -k --norsrc --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 echo "✅ Build & Package Successful!"
 echo "👉 Release File: $ZIP_PATH (Upload this to GitHub)"
