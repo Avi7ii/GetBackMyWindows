@@ -20,6 +20,10 @@
     <img src="https://img.shields.io/badge/CPU-0%25-success?style=for-the-badge&logo=speedtest&logoColor=white" alt="Performance">
     <img src="https://img.shields.io/badge/Size-Extremely_Light-blueviolet?style=for-the-badge&logo=micro-strategy&logoColor=white" alt="Size">
 </p>
+<p>
+    <img src="https://img.shields.io/github/downloads/Avi7ii/GetBackMyWindows/total?style=for-the-badge&color=blue&logo=github" alt="Downloads">
+    <img src="https://komarev.com/ghpvc/?username=Avi7ii&repo=GetBackMyWindows&style=for-the-badge&color=blueviolet" alt="Views">
+</p>
 
 <br>
 
