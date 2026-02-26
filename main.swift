@@ -106,7 +106,7 @@ class HotkeyManager {
 // MARK: - Update Checker
 class UpdateChecker {
     static let shared = UpdateChecker()
-    static let currentVersion = "2.0.3"
+    static let currentVersion = "2.0.4"
     
     private let defaults = UserDefaults.standard
     private let keyLastCheck = "LastUpdateCheckDate"
@@ -205,6 +205,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         
         // Ensure AutoHideManager is active (observers)
         _ = AutoHideManager.shared
+        // Apply persisted Dock visibility immediately (important for login launch).
+        AutoHideManager.shared.applyDockIconVisibilityForCurrentState()
+        DispatchQueue.main.async {
+            AutoHideManager.shared.applyDockIconVisibilityForCurrentState()
+        }
         
         // Show Settings if it's likely the first run (no permission)
         // or just always checking permissions.

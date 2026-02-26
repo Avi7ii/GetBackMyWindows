@@ -2,6 +2,22 @@
 import Cocoa
 import Carbon
 
+private func isDarkAppearance(_ appearance: NSAppearance) -> Bool {
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+}
+
+private func isDarkAppearance(for view: NSView?) -> Bool {
+    let appearance = view?.window?.effectiveAppearance ?? view?.effectiveAppearance ?? NSApp.effectiveAppearance
+    return isDarkAppearance(appearance)
+}
+
+private func isSystemDarkMode() -> Bool {
+    if let style = UserDefaults(suiteName: "NSGlobalDomain")?.string(forKey: "AppleInterfaceStyle") {
+        return style.lowercased() == "dark"
+    }
+    return isDarkAppearance(NSApp.effectiveAppearance)
+}
+
 // MARK: - Auto-Hide Manager (Preserved)
 class AutoHideManager {
     static let shared = AutoHideManager()
@@ -247,6 +263,8 @@ class ModernTutorialViewController: ModernBaseViewController {
 
 class RootViewController: NSViewController {
     private var contentViewController: NSViewController?
+    private var visualEffectView: NSVisualEffectView?
+    private var globalShadowLayers: [CALayer] = []
     
     init() { super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError() }
@@ -273,6 +291,7 @@ class RootViewController: NSViewController {
         visualEffect.layer?.cornerRadius = 20
         visualEffect.layer?.cornerCurve = .continuous
         visualEffect.layer?.masksToBounds = false // ALLOW INNER SHADOWS TO BREATHE
+        visualEffectView = visualEffect
         
         container.addSubview(visualEffect)
         
@@ -295,6 +314,7 @@ class RootViewController: NSViewController {
             sLayer.shadowRadius = shadowRadii[i]
             sLayer.name = "global_s_\(i)"
             globalShadowView.layer?.addSublayer(sLayer)
+            globalShadowLayers.append(sLayer)
         }
         
         visualEffect.addSubview(globalShadowView)
@@ -326,10 +346,15 @@ class RootViewController: NSViewController {
                 $0.shadowPath = shadowPath
             }
         }
+        
+        updateBackdropMaterial()
+        updateGlobalShadowAppearance()
     }
     
     override func viewDidAppear() {
         super.viewDidAppear()
+        updateBackdropMaterial()
+        updateGlobalShadowAppearance()
         // Window Level Clipping
         if let window = self.view.window {
             window.backgroundColor = .clear
@@ -353,6 +378,19 @@ class RootViewController: NSViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         self.view.window?.invalidateShadow()
+    }
+    
+    private func updateBackdropMaterial() {
+        let dark = isDarkAppearance(for: view)
+        visualEffectView?.material = dark ? .fullScreenUI : .windowBackground
+    }
+    
+    private func updateGlobalShadowAppearance() {
+        let dark = isDarkAppearance(for: view)
+        let opacities: [Float] = dark ? [0.45, 0.28, 0.15, 0.08] : [0.14, 0.09, 0.05, 0.03]
+        for (index, layer) in globalShadowLayers.enumerated() where index < opacities.count {
+            layer.shadowOpacity = opacities[index]
+        }
     }
     
     func embed(child: NSViewController) {
@@ -413,6 +451,9 @@ class SidebarViewController: NSViewController {
     weak var delegate: SidebarDelegate?
     private var stackView: NSStackView!
     private var buttons: [SidebarButton] = []
+    private var sectionLabels: [NSTextField] = []
+    private var backdropView: NSVisualEffectView?
+    private var glintView: NSView?
     
     override func loadView() {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 400))
@@ -440,6 +481,7 @@ class SidebarViewController: NSViewController {
         backdrop.layer?.cornerRadius = 18
         backdrop.layer?.cornerCurve = .continuous
         backdrop.layer?.masksToBounds = true
+        backdropView = backdrop
         
         // Premium Double Border (ENHANCED RIM PROMINENCE)
         backdrop.layer?.borderWidth = 0.8 // Thicker
@@ -453,6 +495,7 @@ class SidebarViewController: NSViewController {
         glint.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
         glint.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addSubview(glint)
+        glintView = glint
 
         
         NSLayoutConstraint.activate([
@@ -504,6 +547,7 @@ class SidebarViewController: NSViewController {
         
         // Select first by default
         buttons.first?.isSelected = true
+        updateSidebarAppearance()
     }
     
     private func addButton(icon: String, title: String, color: NSColor) {
@@ -521,9 +565,10 @@ class SidebarViewController: NSViewController {
     
     private func addLabel(_ text: String) {
         let label = NSTextField(labelWithString: text.uppercased())
-        label.font = .systemFont(ofSize: 10, weight: .bold)
+        label.font = .systemFont(ofSize: 11, weight: .bold)
         label.textColor = .secondaryLabelColor.withAlphaComponent(0.6)
         stackView.addArrangedSubview(label)
+        sectionLabels.append(label)
     }
     
     @objc func buttonClicked(_ sender: SidebarButton) {
@@ -542,6 +587,25 @@ class SidebarViewController: NSViewController {
         if let btn = buttons.first(where: { $0.sectionTitle == name }) {
             buttonClicked(btn)
         }
+    }
+    
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        updateSidebarAppearance()
+    }
+    
+    private func updateSidebarAppearance() {
+        let dark = isDarkAppearance(for: view)
+        let systemDark = isSystemDarkMode()
+        let borderColor = dark ? NSColor.white.withAlphaComponent(0.25) : NSColor.black.withAlphaComponent(0.12)
+        let glintColor = dark ? NSColor.white.withAlphaComponent(0.18) : NSColor.white.withAlphaComponent(0.7)
+        // Force strong contrast for section headers; avoid vibrancy making text look white in light mode.
+        let sectionTextColor = systemDark
+            ? NSColor.white.withAlphaComponent(0.78)
+            : NSColor(calibratedWhite: 0.16, alpha: 0.92)
+        backdropView?.layer?.borderColor = borderColor.cgColor
+        glintView?.layer?.backgroundColor = glintColor.cgColor
+        sectionLabels.forEach { $0.textColor = sectionTextColor }
     }
 }
 
@@ -688,6 +752,9 @@ class ContainerViewController: NSViewController, SidebarDelegate {
 class ModernBaseViewController: NSViewController {
     let pageTitle: String
     private var cardContainer: NSView! // Property for layout updates
+    private var cardShadowLayers: [CALayer] = []
+    private var cardView: NSView?
+    private var cardGlintView: NSView?
     
     init(title: String) {
         self.pageTitle = title
@@ -730,6 +797,7 @@ class ModernBaseViewController: NSViewController {
             sLayer.shadowRadius = shadowRadii[i]
             sLayer.name = "content_s_\(i)"
             cardContainer.layer?.addSublayer(sLayer)
+            cardShadowLayers.append(sLayer)
         }
         
         // Update paths on layout or after delay
@@ -743,6 +811,7 @@ class ModernBaseViewController: NSViewController {
         card.layer?.cornerRadius = 20
         card.layer?.cornerCurve = .continuous
         card.layer?.masksToBounds = true
+        cardView = card
         
         // Premium Double Border (ENHANCED RIM)
         card.layer?.borderWidth = 0.8
@@ -756,6 +825,7 @@ class ModernBaseViewController: NSViewController {
         glint.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.2).cgColor
         glint.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(glint)
+        cardGlintView = glint
         
         NSLayoutConstraint.activate([
             headerLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 40),
@@ -794,6 +864,7 @@ class ModernBaseViewController: NSViewController {
         ])
         
         setupContent(in: stack)
+        updateCardAppearance()
     }
     
     override func viewDidLayout() {
@@ -807,6 +878,27 @@ class ModernBaseViewController: NSViewController {
                      $0.shadowPath = path
                 }
             }
+        }
+    }
+    
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        updateCardAppearance()
+    }
+    
+    private func updateCardAppearance() {
+        let dark = isDarkAppearance(for: view)
+        // Keep dark-mode values unchanged; only tune light mode.
+        let backgroundColor = dark ? NSColor(white: 0.16, alpha: 0.45) : NSColor(white: 1.0, alpha: 0.82)
+        let borderColor = dark ? NSColor.white.withAlphaComponent(0.25) : NSColor.black.withAlphaComponent(0.12)
+        let glintColor = dark ? NSColor.white.withAlphaComponent(0.2) : NSColor.white.withAlphaComponent(0.9)
+        let shadowOpacities: [Float] = dark ? [0.4, 0.22, 0.1, 0.05] : [0.12, 0.07, 0.04, 0.02]
+        
+        cardView?.layer?.backgroundColor = backgroundColor.cgColor
+        cardView?.layer?.borderColor = borderColor.cgColor
+        cardGlintView?.layer?.backgroundColor = glintColor.cgColor
+        for (index, layer) in cardShadowLayers.enumerated() where index < shadowOpacities.count {
+            layer.shadowOpacity = shadowOpacities[index]
         }
     }
     
