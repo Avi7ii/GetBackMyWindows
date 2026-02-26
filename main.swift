@@ -106,7 +106,7 @@ class HotkeyManager {
 // MARK: - Update Checker
 class UpdateChecker {
     static let shared = UpdateChecker()
-    static let currentVersion = "2.0.0"
+    static let currentVersion = "2.0.1"
     
     private let defaults = UserDefaults.standard
     private let keyLastCheck = "LastUpdateCheckDate"

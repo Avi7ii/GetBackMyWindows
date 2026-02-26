@@ -24,11 +24,12 @@ class AutoHideManager {
     @objc private func appDidBecomeActive() {
         print("AutoHideManager: App Became Active -> Canceling Hide")
         cancelHide()
-        
-        // Ensure Policy is Regular so it shows in Dock
-        if NSApp.activationPolicy() != .regular {
-             NSApp.setActivationPolicy(.regular)
-        }
+        applyDockIconVisibilityForCurrentState()
+    }
+    
+    var showDockIcon: Bool {
+        get { UserDefaults.standard.object(forKey: "ShowDockIcon") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "ShowDockIcon") }
     }
     
     var isEnabled: Bool {
@@ -46,6 +47,13 @@ class AutoHideManager {
     
     func scheduleHide() {
         cancelHide()
+        
+        // If user disabled Dock icon entirely, keep accessory mode immediately.
+        if !showDockIcon {
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
+        
         guard isEnabled else { return }
         print("AutoHideManager: Scheduled hide in \(delay) seconds")
         
@@ -59,6 +67,11 @@ class AutoHideManager {
                  print("AutoHideManager: App is active with visible windows, skipping hide")
                  return
             }
+            // NEW: Hide all windows before removing Dock icon
+            DispatchQueue.main.async {
+                NSApp.windows.forEach { $0.orderOut(nil) }
+            }
+            
             NSApp.setActivationPolicy(.accessory)
         }
     }
@@ -70,10 +83,15 @@ class AutoHideManager {
     
     func show() {
         cancelHide()
-        if NSApp.activationPolicy() != .regular {
-             NSApp.setActivationPolicy(.regular)
-        }
+        applyDockIconVisibilityForCurrentState()
         NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    func applyDockIconVisibilityForCurrentState() {
+        let targetPolicy: NSApplication.ActivationPolicy = showDockIcon ? .regular : .accessory
+        if NSApp.activationPolicy() != targetPolicy {
+            NSApp.setActivationPolicy(targetPolicy)
+        }
     }
 }
 
@@ -816,6 +834,7 @@ class ModernGeneralViewController: ModernBaseViewController {
     
     private var statusLabel: NSTextField!
     private var permissionIcon: NSImageView!
+    private var autoHideDelayPopup: NSPopUpButton?
     
     override func setupContent(in stack: NSStackView) {
         // Permissions Section
@@ -868,6 +887,12 @@ class ModernGeneralViewController: ModernBaseViewController {
         // Auto Hide
         stack.addArrangedSubview(createHeader("Dock Behaviour"))
         
+        let dockIconSwitch = NSSwitch()
+        dockIconSwitch.state = AutoHideManager.shared.showDockIcon ? .on : .off
+        dockIconSwitch.target = self
+        dockIconSwitch.action = #selector(toggleDockIconVisibility(_:))
+        stack.addArrangedSubview(createRow(label: "Show Dock Icon", control: dockIconSwitch))
+        
         let hideRow = NSStackView()
         hideRow.spacing = 12
         hideRow.alignment = .firstBaseline
@@ -907,6 +932,8 @@ class ModernGeneralViewController: ModernBaseViewController {
         
         hidePopup.target = self
         hidePopup.action = #selector(changeAutoHideDelay(_:))
+        autoHideDelayPopup = hidePopup
+        hidePopup.isEnabled = AutoHideManager.shared.showDockIcon
         
         hideRow.addArrangedSubview(hideLabel)
         hideRow.addArrangedSubview(hidePopup)
@@ -926,6 +953,17 @@ class ModernGeneralViewController: ModernBaseViewController {
         } else {
             AutoHideManager.shared.isEnabled = true
             AutoHideManager.shared.delay = val
+        }
+    }
+    
+    @objc func toggleDockIconVisibility(_ sender: NSSwitch) {
+        AutoHideManager.shared.showDockIcon = (sender.state == .on)
+        AutoHideManager.shared.applyDockIconVisibilityForCurrentState()
+        autoHideDelayPopup?.isEnabled = AutoHideManager.shared.showDockIcon
+        
+        // Turning off Dock icon makes auto-hide irrelevant.
+        if !AutoHideManager.shared.showDockIcon {
+            AutoHideManager.shared.cancelHide()
         }
     }
     
