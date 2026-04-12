@@ -490,45 +490,40 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
 }
 
 func isMouseInDockRegion(_ location: CGPoint) -> Bool {
-    // 当 Dock 自动隐藏时，visibleFrame 会包含 Dock 区域
-    // 所以我们需要直接检测鼠标是否在屏幕边缘区域（ Dock 可能出现的位置）
-
+    // Check if the point is within any screen's "safe area" (visibleFrame).
+    // If it is inside visibleFrame, it's NOT on the Dock (Dock is excluded from visibleFrame).
+    // If it is OUTSIDE visibleFrame but INSIDE frame, it's potentially on the Dock (or Menu Bar).
+    
     for screen in NSScreen.screens {
-        let screenHeight = screen.frame.height
-        let screenWidth = screen.frame.width
-
-        // 转换坐标到 Cocoa 坐标系（原点左下）
-        let cocoaY = screenHeight - location.y
-
-        // 检查鼠标是否在这个屏幕上
-        if location.x >= screen.frame.minX && location.x <= screen.frame.maxX &&
-           location.y >= screen.frame.minY && location.y <= screen.frame.maxY {
-
-            // Dock 边缘阈值（像素）
-            let dockEdgeThreshold: CGFloat = 100
-
-            // 检查底部边缘区域（底部 Dock）
-            // visibleFrame.origin.y 是 Dock 占据的高度
-            if cocoaY <= dockEdgeThreshold {
-                // 进一步确认：检查是否接近屏幕底部
-                if screen.visibleFrame.origin.y <= dockEdgeThreshold {
-                    return true
-                }
+        // Convert CoreGraphics geometric point (top-left 0,0) to Cocoa (bottom-left 0,0)
+        // Note: location is CGEvent location (top-left origin).
+        // NSScreen.frame is bottom-left origin? 
+        // Actually simplest is: Check if point is outside the "User Space".
+        
+        // Let's stick to CG coordinates for simplicity if possible, but NSScreen uses Cocoa coords.
+        // We need to flip Y.
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else { return true }
+        let cocoaY = primaryScreenHeight - location.y
+        let cocoaPoint = NSPoint(x: location.x, y: cocoaY)
+        
+        if NSPointInRect(cocoaPoint, screen.frame) {
+            // Point is on this screen.
+            // Check if it is inside the usable area (excluding Dock/Menu)
+            if NSPointInRect(cocoaPoint, screen.visibleFrame) {
+                return false // It's in the content area, definitively NOT the Dock.
             }
-
-            // 检查左侧边缘区域（左边 Dock）
-            if location.x <= dockEdgeThreshold && screen.visibleFrame.origin.x <= dockEdgeThreshold {
-                return true
+            // It's on screen but outside visible area -> Dock or Menu Bar.
+            // Heuristic: Menu Bar is usually at top (high Cocoa Y). Dock is at bottom/side.
+            // We assume Dock if it's not the top menu bar.
+            // Simple check: Is it the Menu Bar?
+            // Menu bar is usually height ~24.
+            if cocoaY > (screen.frame.maxY - 25) {
+                return false // It's the Menu Bar
             }
-
-            // 检查右侧边缘区域（右边 Dock）
-            if location.x >= screenWidth - dockEdgeThreshold && screen.frame.maxX - screen.visibleFrame.maxX <= dockEdgeThreshold {
-                return true
-            }
+            return true // It's likely the Dock
         }
     }
-
-    return false
+    return false // Fallback: If off-screen or undetected, let's be safe and say No (or True? False is safer for perfs)
 }
 
 func isDockIcon(element: AXUIElement) -> Bool {
